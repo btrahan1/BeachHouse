@@ -35,41 +35,71 @@
                     </div>
 
                     <div class="mb-3">
-                        <label class="form-label">Select Strategy</label>
-                        @if (_strategies == null)
-
-                        {
-                            <p><em>Loading strategies...</em></p>
-                        }
-
-                        else
-
-                        {
-                            <InputSelect @bind-Value="_parameters.StrategyId" class="form-select">
-                                @foreach (var strategy in _strategies)
-
-                                {
-                                    <option value="@strategy.StrategyId">@strategy.StrategyName</option>
-                                }
-                            </InputSelect>
-                            @if (SelectedStrategy != null)
-
-                            {
-                                <small class="form-text text-muted">@SelectedStrategy.Description</small>
-                            }
-                        }
+                        <label class="form-label">Backtest Mode</label>
+                        <InputRadioGroup @bind-Value="_parameters.Mode">
+                            <div class="form-check">
+                                <InputRadio Value='@("Single")' id="singleMode" class="form-check-input"/>
+                                <label class="form-check-label" for="singleMode">Single Strategy</label>
+                            </div>
+                            <div class="form-check">
+                                <InputRadio Value='@("Seasonal")' id="seasonalMode" class="form-check-input"/>
+                                <label class="form-check-label" for="seasonalMode">Seasonal Strategy</label>
+                            </div>
+                        </InputRadioGroup>
                     </div>
 
-                    <button class="btn btn-primary" @onclick="RunBacktest" disabled="@_isBusy">
-                        @if (_isBusy)
+                    @if (_parameters.Mode == "Single")
+                    {
+                        <div class="mb-3">
+                            <label class="form-label">Select Strategy</label>
+                            @if (_strategies == null)
+                            {
+                                <p><em>Loading strategies...</em></p>
+                            }
+                            else
+                            {
+                                <InputSelect @bind-Value="_parameters.StrategyId" class="form-select">
+                                    @foreach (var strategy in _strategies)
+                                    {
+                                        <option value="@strategy.StrategyId">@strategy.StrategyName</option>
+                                    }
+                                </InputSelect>
+                                @if (SelectedStrategy != null)
+                                {
+                                    <small class="form-text text-muted">@SelectedStrategy.Description</small>
+                                }
+                            }
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="row">
+                            <div class="col-6 mb-2"> 
+                                <label class="form-label">Q1 Strategy</label>
+                                <InputSelect @bind-Value="_parameters.Q1StrategyId" class="form-select form-select-sm"> <option value="0">--- Do Nothing ---</option> @foreach(var s in _strategies) { <option value="@s.StrategyId">@s.StrategyName</option> } </InputSelect>
+                            </div>
+                            <div class="col-6 mb-2">
+                                <label class="form-label">Q2 Strategy</label>
+                                <InputSelect @bind-Value="_parameters.Q2StrategyId" class="form-select form-select-sm"> <option value="0">--- Do Nothing ---</option> @foreach(var s in _strategies) { <option value="@s.StrategyId">@s.StrategyName</option> } </InputSelect>
+                            </div>
+                            <div class="col-6 mb-2">
+                                <label class="form-label">Q3 Strategy</label>
+                                <InputSelect @bind-Value="_parameters.Q3StrategyId" class="form-select form-select-sm"> <option value="0">--- Do Nothing ---</option> @foreach(var s in _strategies) { <option value="@s.StrategyId">@s.StrategyName</option> } </InputSelect>
+                            </div>
+                             <div class="col-6 mb-2">
+                                <label class="form-label">Q4 Strategy</label>
+                                <InputSelect @bind-Value="_parameters.Q4StrategyId" class="form-select form-select-sm"> <option value="0">--- Do Nothing ---</option> @foreach(var s in _strategies) { <option value="@s.StrategyId">@s.StrategyName</option> } </InputSelect>
+                            </div>
+                        </div>
+                    }
 
+                    <button class="btn btn-primary mt-3" @onclick="RunBacktest" disabled="@_isBusy">
+                        @if (_isBusy)
                         {
                             <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
                             <span> Running...</span>
                         }
-
                         else
-
                         {
                             <span>Run Backtest</span>
                         }
@@ -78,7 +108,6 @@
             </div>
         </div>
         @if (_result != null && _result.YearlyBreakdown.Any())
-
         {
             <div class="card mt-3">
                 <div class="card-header">Year-by-Year Breakdown</div>
@@ -94,7 +123,6 @@
                         </thead>
                         <tbody>
                             @foreach (var year in _result.YearlyBreakdown)
-
                             {
                                 <tr>
                                     <td>@year.Year</td>
@@ -114,13 +142,10 @@
             <div class="card-header">Backtest Results (Grand Total)</div>
             <div class="card-body">
                 @if (_result == null)
-
                 {
                     <p>Select a strategy and click 'Run Backtest' to see results.</p>
                 }
-
                 else
-
                 {
                     <div class="row">
                         <div class="col-md-6">
@@ -145,7 +170,6 @@
                             <thead><tr><th>Ticker</th><th>Entry</th><th>Exit</th><th>P/L</th></tr></thead>
                             <tbody>
                                 @foreach (var trade in _result.AllTrades.OrderByDescending(t => t.ExitDate))
-
                                 {
                                     <tr>
                                         <td>@trade.Ticker</td>
@@ -164,13 +188,11 @@
 </div>
 
 @if (_isBusy)
-
 {
     <div class="card mt-3">
         <div class="card-header">Simulation Log</div>
         <div class="card-body" style="max-height: 200px; overflow-y: scroll; font-family: monospace; font-size: 0.8em;">
             @foreach (var msg in _progressMessages)
-
             {
                 <p class="mb-0"><small>@msg</small></p>
             }
@@ -180,74 +202,44 @@
 
 @code {
     private BacktestParameters _parameters = new();
-
     private BacktestResult? _result;
-
     private bool _isBusy = false;
-
     private bool _onlySP500 = true;
-
     private List<string> _progressMessages = new();
-
-    private IEnumerable<Strategy>? _strategies;
-
-
+    private IEnumerable<Strategy> _strategies = Enumerable.Empty<Strategy>();
 
     private Strategy? SelectedStrategy => _strategies?.FirstOrDefault(s => s.StrategyId == _parameters.StrategyId);
 
-
-
     protected override async Task OnInitializedAsync()
-
     {
-
         _strategies = await BacktestService.GetAllStrategiesAsync();
-
         if (_strategies.Any())
-
         {
-
             _parameters.StrategyId = _strategies.First().StrategyId;
-
+            // Default seasonal strategies to the first one as well
+            _parameters.Q1StrategyId = _strategies.First().StrategyId;
+            _parameters.Q2StrategyId = _strategies.First().StrategyId;
+            _parameters.Q3StrategyId = _strategies.First().StrategyId;
+            _parameters.Q4StrategyId = _strategies.First().StrategyId;
         }
-
     }
 
-
-
     private async Task RunBacktest()
-
     {
-
         _isBusy = true;
-
         _result = null;
-
         _progressMessages.Clear();
-
         StateHasChanged();
 
-
-
         Action<string> progressCallback = (message) =>
-
         {
-
             _progressMessages.Add($"[{DateTime.Now:HH:mm:ss}] {message}");
-
             InvokeAsync(StateHasChanged);
-
         };
-
-
 
         _result = await BacktestService.RunBacktestAsync(_parameters, _onlySP500, progressCallback);
 
-
-
         _isBusy = false;
-
         StateHasChanged();
-
     }
 }

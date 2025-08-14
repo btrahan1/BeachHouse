@@ -25,17 +25,44 @@ namespace BeachHouse.UI.Services
             var stopwatch = Stopwatch.StartNew();
             onProgress("Initializing backtest...");
 
-            // STAGE 0: LOAD STRATEGY DEFINITION
-            onProgress($"Loading strategy definition for ID: {parameters.StrategyId}...");
-            var strategy = await _db.GetStrategyByIdAsync(parameters.StrategyId);
-            if (strategy == null)
+            // STAGE 0: LOAD STRATEGY DEFINITION(S)
+            var seasonalStrategies = new Dictionary<int, Strategy>();
+            var seasonalEntryRules = new Dictionary<int, HashSet<string>>();
+            var seasonalExitRules = new Dictionary<int, HashSet<string>>();
+
+            if (parameters.Mode == "Single")
             {
-                onProgress($"FATAL ERROR: Strategy with ID {parameters.StrategyId} not found.");
-                return new BacktestResult();
+                onProgress($"Loading single strategy definition for ID: {parameters.StrategyId}...");
+                var strategy = await _db.GetStrategyByIdAsync(parameters.StrategyId);
+                if (strategy == null)
+                {
+                    onProgress($"FATAL ERROR: Strategy with ID {parameters.StrategyId} not found.");
+                    return new BacktestResult();
+                }
+                for (int i = 1; i <= 4; i++) { seasonalStrategies[i] = strategy; }
             }
-            var entryRules = new HashSet<string>(strategy.Rules.Where(r => r.RuleType == "Entry").Select(r => r.SignalName));
-            var exitRules = new HashSet<string>(strategy.Rules.Where(r => r.RuleType == "Exit").Select(r => r.SignalName));
-            onProgress($"Strategy '{strategy.StrategyName}' loaded successfully.");
+            else // Seasonal Mode
+            {
+                onProgress("Loading seasonal strategy definitions...");
+                var strategyIds = new[] { parameters.Q1StrategyId, parameters.Q2StrategyId, parameters.Q3StrategyId, parameters.Q4StrategyId };
+                for (int i = 0; i < 4; i++)
+                {
+                    int strategyId = strategyIds[i];
+                    int quarter = i + 1;
+                    if (strategyId > 0)
+                    {
+                        var strategy = await _db.GetStrategyByIdAsync(strategyId);
+                        if (strategy != null) seasonalStrategies[quarter] = strategy;
+                    }
+                }
+            }
+
+            foreach (var kvp in seasonalStrategies)
+            {
+                seasonalEntryRules[kvp.Key] = new HashSet<string>(kvp.Value.Rules.Where(r => r.RuleType == "Entry").Select(r => r.SignalName));
+                seasonalExitRules[kvp.Key] = new HashSet<string>(kvp.Value.Rules.Where(r => r.RuleType == "Exit").Select(r => r.SignalName));
+            }
+            onProgress($"Strategies loaded successfully.");
 
             // STAGE 1: UPFRONT DATA LOAD
             onProgress("Loading and pre-calculating all historical data and indicators...");
@@ -57,10 +84,23 @@ namespace BeachHouse.UI.Services
             var result = new BacktestResult { InitialCapital = parameters.InitialCapital };
             var virtualPortfolio = new List<SimulatedTrade>();
             var availableCapital = parameters.InitialCapital;
+            int lastYearProcessed = 0;
 
             foreach (var currentDate in tradingDays)
             {
                 if (currentDate < parameters.StartDate || currentDate > parameters.EndDate) continue;
+
+                if (currentDate.Year > lastYearProcessed)
+                {
+                    lastYearProcessed = currentDate.Year;
+                    onProgress($"---> Processing trades for year {lastYearProcessed}...");
+                }
+
+                int currentQuarter = (currentDate.Month - 1) / 3 + 1;
+                if (!seasonalStrategies.TryGetValue(currentQuarter, out var activeStrategy)) continue; // --- Skip if no strategy for this quarter
+
+                var entryRules = seasonalEntryRules[currentQuarter];
+                var exitRules = seasonalExitRules[currentQuarter];
 
                 // 1. Process Exits
                 foreach (var trade in virtualPortfolio.Where(t => t.IsOpen).ToList())
@@ -99,7 +139,9 @@ namespace BeachHouse.UI.Services
                         canEnter = false;
                     }
                 }
-                if (entryRules.Contains("Q2Filter") && (currentDate.Month >= 4 && currentDate.Month <= 6))
+                
+                // The Q2Filter is only active in Single mode. In Seasonal, the UI choice is the authority.
+                if (parameters.Mode == "Single" && entryRules.Contains("Q2Filter") && (currentDate.Month >= 4 && currentDate.Month <= 6))
                 {
                     canEnter = false;
                 }
@@ -108,7 +150,7 @@ namespace BeachHouse.UI.Services
                 {
                     foreach (var ticker in allTradableTickers)
                     {
-                        decimal amountToInvest = CalculateAmountToInvest(strategy, availableCapital, virtualPortfolio, marketDataLookup, currentDate);
+                        decimal amountToInvest = CalculateAmountToInvest(activeStrategy, availableCapital, virtualPortfolio, marketDataLookup, currentDate);
 
                         if (availableCapital < amountToInvest) continue;
                         if (virtualPortfolio.Any(t => t.Ticker == ticker && t.IsOpen)) continue;

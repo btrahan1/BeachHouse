@@ -1,5 +1,6 @@
 using BeachHouse.UI.Models;
 using System.Collections.ObjectModel;
+using System.Linq;
 
 namespace BeachHouse.UI.Services
 {
@@ -29,7 +30,16 @@ namespace BeachHouse.UI.Services
             if (_isInitialized) return;
             await LoadAllDataAsync();
 
-            (MinSimulationDate, MaxSimulationDate) = await _db.GetDataDateRangeAsync();
+            var (minDate, maxDate) = await _db.GetDataDateRangeAsync();
+            MinSimulationDate = minDate;
+            MaxSimulationDate = maxDate;
+
+            // Handle case where database is empty
+            if (MaxSimulationDate < MinSimulationDate || MaxSimulationDate == default)
+            {
+                MaxSimulationDate = DateTime.Today;
+                MinSimulationDate = DateTime.Today.AddYears(-1);
+            }
             CurrentSimulationDate = MaxSimulationDate;
 
             _isInitialized = true;
@@ -54,6 +64,11 @@ namespace BeachHouse.UI.Services
             Holdings.Clear();
             foreach (var holding in holdingData) { Holdings.Add(holding); }
 
+            await ReloadTransactionsAsync();
+        }
+
+        private async Task ReloadTransactionsAsync()
+        {
             var transactionData = await _db.LoadData<TransactionHistory, dynamic>("spTransactionHistory_GetAll", new { });
             Transactions.Clear();
             foreach (var tx in transactionData) { Transactions.Add(tx); }
@@ -62,28 +77,73 @@ namespace BeachHouse.UI.Services
         public async Task ExecuteBuyOrderAsync(string ticker, string companyName, int shares, decimal pricePerShare)
         {
             await _db.SaveData("spTransaction_Buy", new { ticker, companyName, shares, pricePerShare, transactionDate = CurrentSimulationDate });
-            await LoadAllDataAsync();
+
+            // Optimistically update in-memory state
+            decimal totalCost = (decimal)shares * pricePerShare;
+            CashBalance -= totalCost;
+
+            var existingHolding = Holdings.FirstOrDefault(h => h.Ticker == ticker);
+            if (existingHolding != null)
+            {
+                var newAverageCost = ((decimal)existingHolding.Shares * existingHolding.AverageCost + totalCost) / (existingHolding.Shares + shares);
+                existingHolding.Shares += shares;
+                existingHolding.AverageCost = newAverageCost;
+            }
+            else
+            {
+                var newHolding = new StockHolding 
+                { 
+                    Ticker = ticker, 
+                    CompanyName = companyName, 
+                    Shares = shares, 
+                    AverageCost = pricePerShare, 
+                    CurrentPrice = pricePerShare
+                };
+                Holdings.Add(newHolding);
+            }
+
+            await ReloadTransactionsAsync();
             OnBrokerageChanged?.Invoke();
         }
 
         public async Task ExecuteSellOrderAsync(string ticker, int shares, decimal pricePerShare)
         {
-            await _db.SaveData("spTransaction_Sell", new { ticker, shares, pricePerShare, transactionDate = CurrentSimulationDate });
-            await LoadAllDataAsync();
+            await _db.SaveData("spTransaction_Sell", new { ticker, sharesToSell = shares, pricePerShare, transactionDate = CurrentSimulationDate });
+            
+            decimal totalProceeds = (decimal)shares * pricePerShare;
+            CashBalance += totalProceeds;
+
+            var existingHolding = Holdings.FirstOrDefault(h => h.Ticker == ticker);
+            if (existingHolding != null)
+            {
+                existingHolding.Shares -= shares;
+                if (existingHolding.Shares <= 0)
+                {
+                    Holdings.Remove(existingHolding);
+                }
+            }
+
+            await ReloadTransactionsAsync();
             OnBrokerageChanged?.Invoke();
         }
 
         public async Task ExecuteDepositAsync(decimal amount)
         {
-            await _db.SaveData("spTransaction_Deposit", new { amount });
-            await LoadAllDataAsync();
+            await _db.SaveData("spTransaction_Deposit", new { amount, transactionDate = CurrentSimulationDate });
+
+            CashBalance += amount;
+            
+            await ReloadTransactionsAsync();
             OnBrokerageChanged?.Invoke();
         }
 
         public async Task ExecuteWithdrawalAsync(decimal amount)
         {
-            await _db.SaveData("spTransaction_Withdraw", new { amount });
-            await LoadAllDataAsync();
+            await _db.SaveData("spTransaction_Withdraw", new { amount, transactionDate = CurrentSimulationDate });
+
+            CashBalance -= amount;
+            
+            await ReloadTransactionsAsync();
             OnBrokerageChanged?.Invoke();
         }
     }
