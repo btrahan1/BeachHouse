@@ -1,0 +1,85 @@
+@inject IMarketDataService MarketDataService
+@inject BrokerageService BrokerageService
+@using System.Globalization
+
+@if (IsVisible)
+{
+    <div class="modal fade show" tabindex="-1" style="display:block; background-color: rgba(0,0,0,0.5);" role="dialog">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Sell @Holding?.Ticker</h5>
+                    <button type="button" class="btn-close" @onclick="OnClose"></button>
+                </div>
+                <div class="modal-body">
+                    @if (_isBusy)
+                    {
+                        <p><em>Fetching historical price for @BrokerageService.CurrentSimulationDate.ToShortDateString()...</em></p>
+                    }
+                    else if (!string.IsNullOrEmpty(_errorMessage))
+                    {
+                        <div class="alert alert-danger">@_errorMessage</div>
+                    }
+                    else if (Holding != null)
+                    {
+                        <p>You own <strong>@Holding.Shares</strong> shares.</p>
+                        <p>Price as of @(_priceDate.ToShortDateString()): <strong>@_currentPrice.ToString("C")</strong></p>
+                        <div class="mb-3">
+                            <label for="shares" class="form-label">Shares to Sell</label>
+                            <input type="number" class="form-control" id="shares" @bind="_sharesToSell" />
+                        </div>
+                        <p><strong>Estimated Proceeds: </strong> @((_sharesToSell * _currentPrice).ToString("C"))</p>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @onclick="OnClose">Cancel</button>
+                    <button type="button" class="btn btn-danger" @onclick="HandleConfirm" disabled="@(_isBusy || _sharesToSell <= 0 || _sharesToSell > Holding?.Shares)">Execute Sell</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public bool IsVisible { get; set; }
+    [Parameter] public StockHolding? Holding { get; set; }
+    [Parameter] public EventCallback<(int shares, decimal price)> OnConfirm { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private bool _isBusy = true;
+    private string _errorMessage = string.Empty;
+    private decimal _currentPrice;
+    private DateTime _priceDate;
+    private int _sharesToSell;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (IsVisible && Holding != null)
+        {
+            _isBusy = true;
+            _errorMessage = string.Empty;
+            _sharesToSell = 0;
+            StateHasChanged();
+
+            var quote = await MarketDataService.GetQuoteForDateAsync(Holding.Ticker, BrokerageService.CurrentSimulationDate);
+            
+            if (quote != null)
+            {
+                _currentPrice = quote.ClosePrice;
+                _priceDate = quote.PriceDate;
+            }
+            else
+            {
+                _errorMessage = $"Could not retrieve historical price for {Holding.Ticker} on or before {BrokerageService.CurrentSimulationDate.ToShortDateString()}.";
+            }
+            _isBusy = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task HandleConfirm()
+    {
+        if (Holding == null || _sharesToSell <= 0 || _sharesToSell > Holding.Shares) return;
+        await OnConfirm.InvokeAsync((_sharesToSell, _currentPrice));
+    }
+}

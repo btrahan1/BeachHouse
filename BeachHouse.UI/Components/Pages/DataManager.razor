@@ -1,0 +1,204 @@
+@page "/datamanager"
+@inject IDataIngestionService DataIngestionService
+@rendermode InteractiveServer
+
+<PageTitle>Data Manager</PageTitle>
+
+<h1>Data Manager</h1>
+<p>Use this page to manage historical stock data.</p>
+
+<div class="row">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">Kaggle Data Ingestion</h5>
+                <p class="card-text">Select the .zip file containing the stock data .txt files.</p>
+
+                <InputFile OnChange="HandleKaggleFileSelected" class="form-control mb-3" />
+
+                <button class="btn btn-primary" @onclick="IngestKaggleData" disabled="@(_isBusy || _kaggleFile == null)">
+                    @if (_isBusy)
+
+                    {
+                        <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+                        <span> Ingesting...</span>
+                    }
+
+                    else
+
+                    {
+                        <span>Ingest Kaggle Data</span>
+                    }
+                </button>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">SPY Index Data Ingestion</h5>
+                <p class="card-text">Select a simple SPY .csv file with headers: <code>date,close</code></p>
+
+                <InputFile OnChange="HandleSpyFileSelected" class="form-control mb-3" />
+
+                <button class="btn btn-secondary" @onclick="IngestSpyData" disabled="@(_isBusy || _spyFile == null)">
+                    @if (_isBusy)
+
+                    {
+                        <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+                        <span> Ingesting...</span>
+                    }
+
+                    else
+
+                    {
+                        <span>Ingest SPY Data</span>
+                    }
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+@if (_progressMessages.Any())
+
+{
+    <div class="card mt-4">
+        <div class="card-header">
+            Ingestion Log
+        </div>
+        <div class="card-body" style="max-height: 400px; overflow-y: auto;">
+            <ul class="list-group list-group-flush">
+                @foreach (var msg in _progressMessages)
+
+                {
+                    <li class="list-group-item">@msg</li>
+                }
+            </ul>
+        </div>
+    </div>
+}
+
+
+@code {
+    private IBrowserFile? _kaggleFile;
+
+    private IBrowserFile? _spyFile;
+
+    private bool _isBusy = false;
+
+    private List<string> _progressMessages = new();
+
+
+
+    private void HandleKaggleFileSelected(InputFileChangeEventArgs e)
+
+    {
+
+        _kaggleFile = e.File;
+
+    }
+
+
+
+    private void HandleSpyFileSelected(InputFileChangeEventArgs e)
+
+    {
+
+        _spyFile = e.File;
+
+    }
+
+
+
+    private async Task IngestKaggleData()
+
+    {
+
+        if (_kaggleFile == null) return;
+
+        await ProcessFileStream(_kaggleFile, (stream, onProgress) => DataIngestionService.IngestStockDataFromZipAsync(stream, onProgress));
+
+    }
+
+
+
+    private async Task IngestSpyData()
+
+    {
+
+        if (_spyFile == null) return;
+
+        await ProcessFileStream(_spyFile, (stream, onProgress) => DataIngestionService.IngestSpyDataAsync(stream, onProgress));
+
+    }
+
+
+
+    private async Task ProcessFileStream(IBrowserFile file, Func<Stream, Action<string>, Task> serviceAction)
+
+    {
+
+        _isBusy = true;
+
+        _progressMessages.Clear();
+
+        StateHasChanged();
+
+
+
+        Action<string> progressCallback = (message) =>
+
+        {
+
+            _progressMessages.Add($"[{DateTime.Now:HH:mm:ss}] {message}");
+
+            InvokeAsync(StateHasChanged);
+
+        };
+
+
+
+        try
+
+        {
+
+            await using var memoryStream = new MemoryStream();
+
+            progressCallback($"Reading {file.Name} into memory buffer...");
+
+            await using var fileStream = file.OpenReadStream(maxAllowedSize: 500 * 1024 * 1024);
+
+            await fileStream.CopyToAsync(memoryStream);
+
+            progressCallback("File buffered successfully. Starting ingestion.");
+
+            memoryStream.Position = 0;
+
+
+
+            await serviceAction(memoryStream, progressCallback);
+
+        }
+
+        catch (Exception ex)
+
+        {
+
+            progressCallback($"ERROR: {ex.Message}");
+
+        }
+
+        finally
+
+        {
+
+            _isBusy = false;
+
+            StateHasChanged();
+
+        }
+
+    }
+}

@@ -1,0 +1,105 @@
+@page "/portfolio"
+@inject BrokerageService BrokerageService
+@inject IMarketDataService MarketDataService
+@implements IDisposable
+@rendermode InteractiveServer
+
+@using System.Globalization
+
+<PageTitle>Portfolio</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h1>Portfolio Holdings</h1>
+    @if (_isInitialized)
+    {
+        <div class="text-end">
+            <strong>Simulation Date:</strong>
+            <span class="badge bg-secondary fs-6">@BrokerageService.CurrentSimulationDate.ToShortDateString()</span>
+        </div>
+    }
+</div>
+
+@if (!_isInitialized)
+{
+    <p><em>Initializing brokerage and loading historical prices...</em></p>
+}
+else
+{
+    <table class="table table-hover">
+        <thead class="table-light">
+            <tr>
+                <th>Ticker</th>
+                <th>Shares</th>
+                <th>Price</th>
+                <th>Market Value</th>
+                <th>Unrealized P/L</th>
+                <th>Avg. Cost</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var holding in BrokerageService.Holdings)
+            {
+                var plColor = holding.UnrealizedPL == 0 ? "text-secondary" : holding.UnrealizedPL > 0 ? "text-success" : "text-danger";
+                <tr>
+                    <td><strong>@holding.Ticker</strong><br /><small class="text-muted">@holding.CompanyName</small></td>
+                    <td>@holding.Shares</td>
+                    <td>@holding.CurrentPrice.ToString("C")</td>
+                    <td><strong>@holding.MarketValue.ToString("C")</strong></td>
+                    <td class="@plColor">
+                        @holding.UnrealizedPL.ToString("C")<br />
+                        <small>(@holding.UnrealizedPLPercent.ToString("P2"))</small>
+                    </td>
+                    <td>@holding.AverageCost.ToString("C")</td>
+                </tr>
+            }
+        </tbody>
+        <tfoot>
+            <tr class="table-light fw-bold">
+                <td colspan="3" class="text-end">Total Portfolio Value:</td>
+                <td>@TotalMarketValue.ToString("C")</td>
+                <td class="@TotalPlColor">
+                    @TotalUnrealizedPL.ToString("C")
+                </td>
+                <td></td>
+            </tr>
+        </tfoot>
+    </table>
+}
+
+@code {
+    private bool _isInitialized = false;
+
+    private decimal TotalMarketValue => BrokerageService.Holdings.Sum(h => h.MarketValue);
+    private decimal TotalUnrealizedPL => BrokerageService.Holdings.Sum(h => h.UnrealizedPL);
+    private string TotalPlColor => TotalUnrealizedPL == 0 ? "text-secondary" : TotalUnrealizedPL > 0 ? "text-success" : "text-danger";
+
+    protected override async Task OnInitializedAsync()
+    {
+        BrokerageService.OnBrokerageChanged += StateHasChanged;
+        BrokerageService.OnSimulationDateChanged += async () => await RefreshPricesForSimDate();
+        
+        await BrokerageService.InitializeAsync();
+        _isInitialized = true;
+        await RefreshPricesForSimDate();
+    }
+
+    private async Task RefreshPricesForSimDate()
+    {
+        var simDate = BrokerageService.CurrentSimulationDate;
+
+        var tasks = BrokerageService.Holdings.Select(async holding =>
+        {
+            var quote = await MarketDataService.GetQuoteForDateAsync(holding.Ticker, simDate);
+            holding.CurrentPrice = quote?.ClosePrice ?? 0;
+        });
+
+        await Task.WhenAll(tasks);
+        StateHasChanged();
+    }
+
+    public void Dispose()
+    {
+        BrokerageService.OnBrokerageChanged -= StateHasChanged;
+        BrokerageService.OnSimulationDateChanged -= async () => await RefreshPricesForSimDate();
+    }
+}

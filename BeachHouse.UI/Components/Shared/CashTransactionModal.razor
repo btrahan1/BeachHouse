@@ -1,0 +1,57 @@
+@using System.ComponentModel.DataAnnotations
+
+@if (IsVisible)
+{
+    <div class="modal fade show" style="display: block;" tabindex="-1" role="dialog">
+        <div class="modal-dialog" role="document">
+            <div class="modal-content">
+                <EditForm Model="@_model" OnValidSubmit="HandleConfirm" FormName="CashTransactionForm">
+                    <DataAnnotationsValidator />
+                    <div class="modal-header">
+                        <h5 class="modal-title">@Title</h5>
+                        <button type="button" class="btn-close" @onclick="HandleClose"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="mb-3">
+                            <label for="amount" class="form-label">Amount</label>
+                            <InputNumber id="amount" class="form-control" @bind-Value="_model.Amount" />
+                            <ValidationMessage For="() => _model.Amount" />
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" @onclick="HandleClose">Cancel</button>
+                        <button type="submit" class="btn btn-primary">Confirm</button>
+                    </div>
+                </EditForm>
+            </div>
+        </div>
+    </div>
+    <div class="modal-backdrop fade show"></div>
+}
+
+@code {
+    private TransactionModel _model = new();
+
+    [Parameter] public bool IsVisible { get; set; }
+    [Parameter] public string Title { get; set; } = string.Empty;
+    [Parameter] public EventCallback<decimal> OnConfirm { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private async Task HandleConfirm()
+    {
+        await OnConfirm.InvokeAsync(_model.Amount);
+        _model = new(); // Reset form
+    }
+
+    private async Task HandleClose()
+    {
+        await OnClose.InvokeAsync();
+    }
+
+    public class TransactionModel
+    {
+        [Required]
+        [Range(typeof(decimal), "0.01", "1000000", ErrorMessage = "Amount must be a positive value.")]
+        public decimal Amount { get; set; }
+    }
+}

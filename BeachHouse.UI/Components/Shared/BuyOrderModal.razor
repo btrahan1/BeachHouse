@@ -1,0 +1,86 @@
+@inject IMarketDataService MarketDataService
+@inject BrokerageService BrokerageService
+@using System.Globalization
+
+@if (IsVisible)
+{
+    <div class="modal fade show" tabindex="-1" style="display:block; background-color: rgba(0,0,0,0.5);" role="dialog">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Buy @TickerSymbol</h5>
+                    <button type="button" class="btn-close" @onclick="OnClose"></button>
+                </div>
+                <div class="modal-body">
+                    @if (_isBusy)
+                    {
+                        <p><em>Fetching historical price for @BrokerageService.CurrentSimulationDate.ToShortDateString()...</em></p>
+                    }
+                    else if (!string.IsNullOrEmpty(_errorMessage))
+                    {
+                        <div class="alert alert-danger">@_errorMessage</div>
+                    }
+                    else if (!string.IsNullOrEmpty(TickerSymbol))
+                    {
+                        <p>Available Cash: <strong>@BrokerageService.CashBalance.ToString("C")</strong></p>
+                        <p>Price as of @(_priceDate.ToShortDateString()): <strong>@_currentPrice.ToString("C")</strong></p>
+                        <div class="mb-3">
+                            <label for="shares" class="form-label">Shares to Buy</label>
+                            <input type="number" class="form-control" id="shares" @bind="_sharesToBuy" />
+                        </div>
+                        <p><strong>Estimated Cost: </strong> @((_sharesToBuy * _currentPrice).ToString("C"))</p>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @onclick="OnClose">Cancel</button>
+                    <button type="button" class="btn btn-success" @onclick="HandleConfirm" disabled="@(_isBusy || _sharesToBuy <= 0 || (_sharesToBuy * _currentPrice) > BrokerageService.CashBalance)">Execute Buy</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public bool IsVisible { get; set; }
+    [Parameter] public string TickerSymbol { get; set; } = string.Empty;
+    [Parameter] public EventCallback<(string ticker, string companyName, int shares, decimal price)> OnConfirm { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private bool _isBusy = true;
+    private string _errorMessage = string.Empty;
+    private decimal _currentPrice;
+    private DateTime _priceDate;
+    private int _sharesToBuy;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (IsVisible && !string.IsNullOrEmpty(TickerSymbol))
+        {
+            _isBusy = true;
+            _errorMessage = string.Empty;
+            _sharesToBuy = 0;
+            StateHasChanged();
+
+            var quote = await MarketDataService.GetQuoteForDateAsync(TickerSymbol, BrokerageService.CurrentSimulationDate);
+
+            if (quote != null)
+            {
+                _currentPrice = quote.ClosePrice;
+                _priceDate = quote.PriceDate;
+            }
+            else
+            {
+                _errorMessage = $"Could not retrieve historical price for {TickerSymbol} on or before {BrokerageService.CurrentSimulationDate.ToShortDateString()}.";
+            }
+            _isBusy = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task HandleConfirm()
+    {
+        if (string.IsNullOrEmpty(TickerSymbol) || _sharesToBuy <= 0 || (_sharesToBuy * _currentPrice) > BrokerageService.CashBalance) return;
+        // For now, we'll pass the Ticker as the Company Name. We can enhance this later.
+        await OnConfirm.InvokeAsync((TickerSymbol, TickerSymbol, _sharesToBuy, _currentPrice));
+    }
+}

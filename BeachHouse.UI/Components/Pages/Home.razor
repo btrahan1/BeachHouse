@@ -1,0 +1,109 @@
+@page "/"
+@inject BrokerageService BrokerageService
+@implements IDisposable
+@rendermode InteractiveServer
+
+<PageTitle>Dashboard</PageTitle>
+
+<div class="container-fluid">
+    <div class="row mb-4">
+        <div class="col-12">
+            <h1>Dashboard</h1>
+            <p class="text-muted">Your financial command center. Current simulation date: @BrokerageService.CurrentSimulationDate.ToString("D")</p>
+        </div>
+    </div>
+
+    @if (!_isInitialized)
+    {
+        <p><em>Loading dashboard data...</em></p>
+    }
+    else
+    {
+        <div class="row">
+            <div class="col-lg-6 mb-3">
+                <div class="card h-100">
+                    <div class="card-header">Time Machine Control</div>
+                    <div class="card-body">
+                        <h5 class="card-title">Set Simulation Date</h5>
+                        <p>Select a date to see portfolio values and execute trades as of that day.</p>
+                        <input type="date" class="form-control"
+                               value="@BrokerageService.CurrentSimulationDate.ToString("yyyy-MM-dd")"
+                               min="@BrokerageService.MinSimulationDate.ToString("yyyy-MM-dd")"
+                               max="@BrokerageService.MaxSimulationDate.ToString("yyyy-MM-dd")"
+                               @onchange="OnDateChanged" />
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-6 mb-3">
+                 <div class="card h-100">
+                    <div class="card-header">Account Summary</div>
+                    <div class="card-body">
+                        <h5 class="card-title">Cash Balance</h5>
+                        <h2>@BrokerageService.CashBalance.ToString("C")</h2>
+                        <hr />
+                        <button class="btn btn-primary me-2" @onclick="@(() => OpenModal("Deposit"))">Deposit Funds</button>
+                        <button class="btn btn-secondary" @onclick="@(() => OpenModal("Withdraw"))">Withdraw Funds</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+<CashTransactionModal IsVisible="_isModalVisible" 
+                    Title="@_modalTitle" 
+                    OnConfirm="HandleCashTransaction" 
+                    OnClose="CloseModal" />
+
+@code {
+    private bool _isInitialized = false;
+    private bool _isModalVisible = false;
+    private string _modalTitle = string.Empty;
+    private string _transactionType = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await BrokerageService.InitializeAsync();
+        BrokerageService.OnBrokerageChanged += StateHasChanged;
+        _isInitialized = true;
+    }
+
+    private void OnDateChanged(ChangeEventArgs e)
+    {
+        if (DateTime.TryParse(e.Value?.ToString(), out var newDate))
+        {
+            BrokerageService.SetSimulationDate(newDate);
+        }
+    }
+
+    private void OpenModal(string type)
+    {
+        _transactionType = type;
+        _modalTitle = type == "Deposit" ? "Deposit Funds" : "Withdraw Funds";
+        _isModalVisible = true;
+    }
+
+    private void CloseModal()
+    {
+        _isModalVisible = false;
+    }
+
+    private async Task HandleCashTransaction(decimal amount)
+    {
+        if (_transactionType == "Deposit")
+        {
+            await BrokerageService.ExecuteDepositAsync(amount);
+        }
+        else if (_transactionType == "Withdraw")
+        {
+            await BrokerageService.ExecuteWithdrawalAsync(amount);
+        }
+        
+        CloseModal();
+    }
+
+    public void Dispose()
+    {
+        BrokerageService.OnBrokerageChanged -= StateHasChanged;
+    }
+}

@@ -1,0 +1,120 @@
+@page "/screener"
+@inject BrokerageService BrokerageService
+@inject IMarketDataService MarketDataService
+@rendermode InteractiveServer
+
+<PageTitle>Screener</PageTitle>
+
+<h1>Historical Stock Screener</h1>
+<p>Find stocks that met specific criteria on the selected simulation date: <strong>@BrokerageService.CurrentSimulationDate.ToShortDateString()</strong></p>
+
+<div class="row">
+    <div class="col-lg-4">
+        <div class="card mb-3">
+            <div class="card-header">Screening Criteria</div>
+            <div class="card-body">
+                 <div class="mb-3">
+                    <div class="form-check">
+                        <input type="checkbox" @bind="_onlySP500" id="sp500CheckScreener" class="form-check-input" />
+                        <label for="sp500CheckScreener" class="form-check-label">Only S&P 500 Stocks</label>
+                    </div>
+                </div>
+                <div class="mb-3">
+                    <label for="minClose" class="form-label">Min. Close Price ($)</label>
+                    <input type="number" id="minClose" class="form-control" @bind="_minClose" />
+                </div>
+                <div class="mb-3">
+                    <label for="minVolume" class="form-label">Min. Volume</label>
+                    <input type="number" id="minVolume" class="form-control" @bind="_minVolume" />
+                </div>
+                <div class="mb-3">
+                    <label for="signal" class="form-label">Technical Signal</label>
+                    <select id="signal" class="form-select" @bind="_signal">
+                        <option value="">None</option>
+                        <option value="price_above_sma50">Price Crosses Above 50-Day SMA</option>
+                        <option value="price_below_sma50">Price Crosses Below 50-Day SMA</option>
+                        <option value="golden_cross">50-Day Crosses Above 200-Day (Golden Cross)</option>
+                        <option value="death_cross">50-Day Crosses Below 200-Day (Death Cross)</option>
+                    </select>
+                </div>
+                <button class="btn btn-primary" @onclick="RunScreen" disabled="@_isBusy">
+                     @if (_isBusy)
+                    {
+                        <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+                        <span> Running...</span>
+                    }
+                    else
+                    {
+                        <span>Run Screen</span>
+                    }
+                </button>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-8">
+        <div class="card">
+            <div class="card-header">Results (@_results.Count())</div>
+            <div class="card-body" style="max-height: 600px; overflow-y: auto;">
+                @if (_results.Any())
+                {
+                    <table class="table table-sm table-striped">
+                        <thead>
+                            <tr>
+                                <th>Ticker</th>
+                                <th>Close Price</th>
+                                <th>SMA50</th>
+                                <th>SMA200</th>
+                                <th>Volume</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach(var result in _results)
+                            {
+                                <tr>
+                                    <td>@result.Ticker</td>
+                                    <td>@result.ClosePrice.ToString("C")</td>
+                                    <td>@result.SMA50?.ToString("N2")</td>
+                                    <td>@result.SMA200?.ToString("N2")</td>
+                                    <td>@result.Volume.ToString("N0")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+                else
+                {
+                    <p>No results found. Adjust your criteria and run the screen.</p>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private bool _isInitialized = false;
+    private bool _isBusy = false;
+    private bool _onlySP500 = true;
+    private decimal? _minClose;
+    private long? _minVolume;
+    private string? _signal;
+
+    private IEnumerable<ScreenerResult> _results = Enumerable.Empty<ScreenerResult>();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await BrokerageService.InitializeAsync();
+        _isInitialized = true;
+    }
+
+    private async Task RunScreen()
+    {
+        _isBusy = true;
+        _results = Enumerable.Empty<ScreenerResult>();
+        StateHasChanged();
+
+        _results = await MarketDataService.RunScreenerAsync(BrokerageService.CurrentSimulationDate, _minClose, _minVolume, _signal, _onlySP500);
+
+        _isBusy = false;
+        StateHasChanged();
+    }
+}

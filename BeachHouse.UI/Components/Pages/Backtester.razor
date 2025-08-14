@@ -1,0 +1,253 @@
+@page "/backtester"
+@inject IBacktestService BacktestService
+@using System.Text.RegularExpressions
+@rendermode InteractiveServer
+
+<PageTitle>Backtester</PageTitle>
+
+<h1>Strategy Backtester</h1>
+<p>Select a pre-defined trading strategy and run it against historical data to see its performance.</p>
+
+<div class="row">
+    <div class="col-lg-4">
+        <div class="card mb-3">
+            <div class="card-header">Strategy Definition</div>
+            <div class="card-body">
+                <EditForm Model="@_parameters">
+                    <div class="mb-3">
+                        <label class="form-label">Universe</label>
+                        <div class="form-check">
+                            <InputCheckbox @bind-Value="_onlySP500" id="sp500Check" class="form-check-input" />
+                            <label for="sp500Check" class="form-check-label">Only S&P 500 Stocks</label>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Date Range</label>
+                        <div class="input-group">
+                            <InputDate @bind-Value="_parameters.StartDate" class="form-control" />
+                            <span class="input-group-text">to</span>
+                            <InputDate @bind-Value="_parameters.EndDate" class="form-control" />
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Initial Capital</label>
+                        <InputNumber @bind-Value="_parameters.InitialCapital" class="form-control" />
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Select Strategy</label>
+                        @if (_strategies == null)
+
+                        {
+                            <p><em>Loading strategies...</em></p>
+                        }
+
+                        else
+
+                        {
+                            <InputSelect @bind-Value="_parameters.StrategyId" class="form-select">
+                                @foreach (var strategy in _strategies)
+
+                                {
+                                    <option value="@strategy.StrategyId">@strategy.StrategyName</option>
+                                }
+                            </InputSelect>
+                            @if (SelectedStrategy != null)
+
+                            {
+                                <small class="form-text text-muted">@SelectedStrategy.Description</small>
+                            }
+                        }
+                    </div>
+
+                    <button class="btn btn-primary" @onclick="RunBacktest" disabled="@_isBusy">
+                        @if (_isBusy)
+
+                        {
+                            <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+                            <span> Running...</span>
+                        }
+
+                        else
+
+                        {
+                            <span>Run Backtest</span>
+                        }
+                    </button>
+                </EditForm>
+            </div>
+        </div>
+        @if (_result != null && _result.YearlyBreakdown.Any())
+
+        {
+            <div class="card mt-3">
+                <div class="card-header">Year-by-Year Breakdown</div>
+                <div class="card-body p-0">
+                    <table class="table table-sm table-striped mb-0">
+                        <thead>
+                            <tr>
+                                <th>Year</th>
+                                <th class="text-end">Net P/L</th>
+                                <th class="text-end">Return</th>
+                                <th class="text-end">Trades</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var year in _result.YearlyBreakdown)
+
+                            {
+                                <tr>
+                                    <td>@year.Year</td>
+                                    <td class="text-end @(year.NetPL >= 0 ? "text-success" : "text-danger")">@year.NetPL.ToString("C")</td>
+                                    <td class="text-end @(year.AnnualReturnPercent >= 0 ? "text-success" : "text-danger")">@year.AnnualReturnPercent.ToString("P2")</td>
+                                    <td class="text-end">@year.TotalTrades</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        }
+    </div>
+    <div class="col-lg-8">
+        <div class="card">
+            <div class="card-header">Backtest Results (Grand Total)</div>
+            <div class="card-body">
+                @if (_result == null)
+
+                {
+                    <p>Select a strategy and click 'Run Backtest' to see results.</p>
+                }
+
+                else
+
+                {
+                    <div class="row">
+                        <div class="col-md-6">
+                            <ul class="list-group">
+                                <li class="list-group-item d-flex justify-content-between align-items-center">Net P/L <span class="badge bg-primary rounded-pill fs-6">@_result.NetPL.ToString("C")</span></li>
+                                <li class="list-group-item d-flex justify-content-between align-items-center">Net P/L % <span class="badge bg-primary rounded-pill fs-6">@_result.NetPLPercent.ToString("P2")</span></li>
+                                <li class="list-group-item d-flex justify-content-between align-items-center">Total Trades <span class="badge bg-secondary rounded-pill">@_result.TotalTrades</span></li>
+                            </ul>
+                        </div>
+                        <div class="col-md-6">
+                            <ul class="list-group">
+                                <li class="list-group-item d-flex justify-content-between align-items-center">Win Rate <span class="badge bg-success rounded-pill">@_result.WinRate.ToString("P2")</span></li>
+                                <li class="list-group-item d-flex justify-content-between align-items-center">Profit Factor <span class="badge bg-info rounded-pill">@_result.ProfitFactor.ToString("N2")</span></li>
+                                <li class="list-group-item d-flex justify-content-between align-items-center">Avg. Gain/Loss <span class="badge bg-warning text-dark rounded-pill">@($"{_result.AverageGain:C} / {_result.AverageLoss:C}")</span></li>
+                            </ul>
+                        </div>
+                    </div>
+                    <hr />
+                    <h5>All Trades</h5>
+                    <div style="max-height: 400px; overflow-y: auto;">
+                        <table class="table table-sm table-striped">
+                            <thead><tr><th>Ticker</th><th>Entry</th><th>Exit</th><th>P/L</th></tr></thead>
+                            <tbody>
+                                @foreach (var trade in _result.AllTrades.OrderByDescending(t => t.ExitDate))
+
+                                {
+                                    <tr>
+                                        <td>@trade.Ticker</td>
+                                        <td>@($"{trade.EntryDate.ToShortDateString()} @ {trade.EntryPrice:C}")</td>
+                                        <td>@($"{trade.ExitDate?.ToShortDateString()} @ {trade.ExitPrice:C}")</td>
+                                        <td class="@(trade.ProfitLoss > 0 ? "text-success" : "text-danger")">@trade.ProfitLoss.ToString("C")</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+@if (_isBusy)
+
+{
+    <div class="card mt-3">
+        <div class="card-header">Simulation Log</div>
+        <div class="card-body" style="max-height: 200px; overflow-y: scroll; font-family: monospace; font-size: 0.8em;">
+            @foreach (var msg in _progressMessages)
+
+            {
+                <p class="mb-0"><small>@msg</small></p>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    private BacktestParameters _parameters = new();
+
+    private BacktestResult? _result;
+
+    private bool _isBusy = false;
+
+    private bool _onlySP500 = true;
+
+    private List<string> _progressMessages = new();
+
+    private IEnumerable<Strategy>? _strategies;
+
+
+
+    private Strategy? SelectedStrategy => _strategies?.FirstOrDefault(s => s.StrategyId == _parameters.StrategyId);
+
+
+
+    protected override async Task OnInitializedAsync()
+
+    {
+
+        _strategies = await BacktestService.GetAllStrategiesAsync();
+
+        if (_strategies.Any())
+
+        {
+
+            _parameters.StrategyId = _strategies.First().StrategyId;
+
+        }
+
+    }
+
+
+
+    private async Task RunBacktest()
+
+    {
+
+        _isBusy = true;
+
+        _result = null;
+
+        _progressMessages.Clear();
+
+        StateHasChanged();
+
+
+
+        Action<string> progressCallback = (message) =>
+
+        {
+
+            _progressMessages.Add($"[{DateTime.Now:HH:mm:ss}] {message}");
+
+            InvokeAsync(StateHasChanged);
+
+        };
+
+
+
+        _result = await BacktestService.RunBacktestAsync(_parameters, _onlySP500, progressCallback);
+
+
+
+        _isBusy = false;
+
+        StateHasChanged();
+
+    }
+}
