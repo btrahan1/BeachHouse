@@ -28,7 +28,6 @@ namespace BeachHouse.UI.Services
             return await connection.QueryAsync<T>(storedProcedureOrSql, parameters, commandType: commandType, commandTimeout: 600);
         }
 
-        // NEW METHODS FOR PROJECT COMPOSER
         public async Task<IEnumerable<Strategy>> GetAllStrategiesAsync()
         {
             const string sql = "SELECT StrategyId, StrategyName, Description, PositionSizingStrategy, PositionSizeValue FROM dbo.Strategies ORDER BY StrategyId;";
@@ -194,6 +193,52 @@ SELECT Ticker, ClosePrice, Volume, SMA50, SMA200 FROM FinalDay WHERE 1=1 ");
                     await bulkCopy.WriteToServerAsync(table);
                 }
             }
+        }
+
+        public async Task SaveBacktestResultAsync(string parametersJson, string notes, BacktestResult result)
+        {
+            var tradesTable = new DataTable();
+            tradesTable.Columns.Add("Ticker", typeof(string));
+            tradesTable.Columns.Add("Shares", typeof(int));
+            tradesTable.Columns.Add("EntryDate", typeof(DateTime));
+            tradesTable.Columns.Add("EntryPrice", typeof(decimal));
+            tradesTable.Columns.Add("ExitDate", typeof(DateTime));
+            tradesTable.Columns.Add("ExitPrice", typeof(decimal));
+            tradesTable.Columns.Add("ProfitLoss", typeof(decimal));
+
+            foreach (var trade in result.AllTrades.Where(t => !t.IsOpen))
+            {
+                tradesTable.Rows.Add(trade.Ticker, trade.Shares, trade.EntryDate, trade.EntryPrice, trade.ExitDate!.Value, trade.ExitPrice!.Value, trade.ProfitLoss);
+            }
+
+            var parameters = new DynamicParameters();
+            parameters.Add("ParametersJson", parametersJson);
+            parameters.Add("Notes", notes);
+            parameters.Add("EndingCapital", result.EndingCapital);
+            parameters.Add("NetPL", result.NetPL);
+            parameters.Add("TotalTrades", result.TotalTrades);
+            parameters.Add("WinRate", result.WinRate);
+            parameters.Add("Trades", tradesTable.AsTableValuedParameter("dbo.udt_BacktestRunTrade"));
+
+            using IDbConnection connection = new SqlConnection(GetConnectionString());
+            await connection.ExecuteAsync("dbo.spBacktestRun_Insert", parameters, commandType: CommandType.StoredProcedure);
+        }
+
+        public async Task<IEnumerable<BacktestRun>> GetBacktestRunHeadersAsync()
+        {
+            using IDbConnection connection = new SqlConnection(GetConnectionString());
+            return await connection.QueryAsync<BacktestRun>("dbo.spBacktestRun_GetAllHeaders", commandType: CommandType.StoredProcedure);
+        }
+
+        public async Task<(BacktestRun? run, IEnumerable<BacktestRunTrade> trades)> GetBacktestRunDetailsAsync(int backtestRunId)
+        {
+            using IDbConnection connection = new SqlConnection(GetConnectionString());
+            using var multi = await connection.QueryMultipleAsync("dbo.spBacktestRun_GetDetails", new { BacktestRunId = backtestRunId }, commandType: CommandType.StoredProcedure);
+            
+            var run = await multi.ReadSingleOrDefaultAsync<BacktestRun>();
+            var trades = await multi.ReadAsync<BacktestRunTrade>();
+
+            return (run, trades);
         }
     }
 }

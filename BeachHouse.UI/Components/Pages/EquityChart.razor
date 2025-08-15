@@ -1,0 +1,19 @@
+﻿@inject IJSRuntime JSRuntime
+@using BeachHouse.UI.Models
+
+<div style="height: 400px; width: 100%;">
+    <canvas id="equityChartCanvas"></canvas>
+</div>
+
+@code {
+    [Parameter]
+    public ChartData? Data { get; set; }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (Data != null && Data.Labels.Any())
+        {
+            await JSRuntime.InvokeVoidAsync("renderEquityChart", Data);
+        }
+    }
+}

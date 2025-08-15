@@ -1,6 +1,7 @@
 @page "/backtester"
 @inject IBacktestService BacktestService
 @using System.Text.RegularExpressions
+@using BeachHouse.UI.Components.Shared
 @rendermode InteractiveServer
 
 <PageTitle>Backtester</PageTitle>
@@ -93,17 +94,34 @@
                         </div>
                     }
 
-                    <button class="btn btn-primary mt-3" @onclick="RunBacktest" disabled="@_isBusy">
-                        @if (_isBusy)
+                    <div class="d-flex align-items-center mt-3">
+                        <button class="btn btn-primary" @onclick="RunBacktest" disabled="@_isBusy">
+                            @if (_isBusy)
+                            {
+                                <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+                                <span> Running...</span>
+                            }
+                            else
+                            {
+                                <span>Run Backtest</span>
+                            }
+                        </button>
+
+                        @if (_result is not null && !_isBusy)
                         {
-                            <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
-                            <span> Running...</span>
+                            <button class="btn btn-success ms-2" @onclick="() => _isSaveModalVisible = true">
+                                Save Results
+                            </button>
                         }
-                        else
-                        {
-                            <span>Run Backtest</span>
-                        }
-                    </button>
+                    </div>
+
+                    @if (_isBusy)
+                    {
+                        <div class="progress mt-2" style="height: 10px;">
+                            <div class="progress-bar" role="progressbar" style="width: @_progressPercentage%" aria-valuenow="@_progressPercentage" aria-valuemin="0" aria-valuemax="100"></div>
+                        </div>
+                    }
+
                 </EditForm>
             </div>
         </div>
@@ -200,6 +218,10 @@
     </div>
 }
 
+<SaveBacktestModal IsVisible="_isSaveModalVisible" 
+                   OnConfirm="HandleSaveResults" 
+                   OnClose="() => _isSaveModalVisible = false" />
+
 @code {
     private BacktestParameters _parameters = new();
     private BacktestResult? _result;
@@ -207,6 +229,8 @@
     private bool _onlySP500 = true;
     private List<string> _progressMessages = new();
     private IEnumerable<Strategy> _strategies = Enumerable.Empty<Strategy>();
+    private int _progressPercentage = 0;
+    private bool _isSaveModalVisible = false;
 
     private Strategy? SelectedStrategy => _strategies?.FirstOrDefault(s => s.StrategyId == _parameters.StrategyId);
 
@@ -229,6 +253,7 @@
         _isBusy = true;
         _result = null;
         _progressMessages.Clear();
+        _progressPercentage = 0;
         StateHasChanged();
 
         Action<string> progressCallback = (message) =>
@@ -237,9 +262,25 @@
             InvokeAsync(StateHasChanged);
         };
 
-        _result = await BacktestService.RunBacktestAsync(_parameters, _onlySP500, progressCallback);
+        Action<int> progressPercentageCallback = (percentage) =>
+        {
+            _progressPercentage = percentage;
+            InvokeAsync(StateHasChanged);
+        };
+
+        _result = await BacktestService.RunBacktestAsync(_parameters, _onlySP500, progressCallback, progressPercentageCallback);
 
         _isBusy = false;
         StateHasChanged();
+    }
+
+    private async Task HandleSaveResults(string notes)
+    {
+        if (_result is not null)
+        {
+            await BacktestService.SaveBacktestResultAsync(_parameters, _result, notes);
+        }
+        _isSaveModalVisible = false;
+        // Optionally, provide feedback that it was saved.
     }
 }

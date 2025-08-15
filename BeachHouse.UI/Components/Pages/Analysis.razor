@@ -1,0 +1,337 @@
+﻿@page "/analysis"
+@inject SqlDataAccess Db
+@inject IBacktestService BacktestService
+@inject IJSRuntime JSRuntime
+@using System.Text
+@using System.Text.Json
+@using BeachHouse.UI.Components.Shared
+@using BeachHouse.UI.Models
+@rendermode InteractiveServer
+
+<PageTitle>Backtest Analysis</PageTitle>
+
+<h1>Backtest Analysis Cockpit</h1>
+<p>Review and analyze the results of previously saved backtest runs.</p>
+
+<div class="row">
+    <div class="col-lg-5">
+        <div class="card mb-3">
+            <div class="card-header">
+                <div class="d-flex justify-content-between align-items-center">
+                    Saved Backtest Runs
+                    @if (_selectedRunsForChart.Any())
+                    {
+                        <button class="btn btn-sm btn-primary" @onclick="UpdateChart">Update Chart</button>
+                    }
+                </div>
+            </div>
+            <div class="card-body p-0" style="max-height: 400px; overflow-y: auto;">
+                @if (_allRuns is null)
+                {
+                    <p class="p-3"><em>Loading saved runs...</em></p>
+                }
+                else
+                {
+                    <div class="list-group list-group-flush">
+                        @foreach (var run in _allRuns)
+                        {
+                            <div class="list-group-item list-group-item-action @(run.BacktestRunId == _selectedRunId ? "active" : "")">
+                                <div class="row align-items-center">
+                                    <div class="col-1">
+                                        <input type="checkbox" class="form-check-input" @onchange="(e) => ToggleRunSelectionForChart(run.BacktestRunId, (bool)(e.Value ?? false))" />
+                                    </div>
+                                    <div class="col-11" @onclick="() => SelectRun(run.BacktestRunId)" style="cursor: pointer;">
+                                        <div class="d-flex w-100 justify-content-between">
+                                            <h6 class="mb-1">@run.Notes</h6>
+                                            <small>@run.RunDateTime.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</small>
+                                        </div>
+                                        <p class="mb-1">
+                                            <span class="badge rounded-pill bg-primary me-1">P/L: @run.NetPL.ToString("C0")</span>
+                                            <span class="badge rounded-pill bg-success me-1">Win Rate: @run.WinRate.ToString("P1")</span>
+                                            <span class="badge rounded-pill bg-secondary">Trades: @run.TotalTrades</span>
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">Equity Curve Comparison</div>
+            <div class="card-body">
+                @if (_chartData is not null)
+                {
+                    <EquityChart Data="_chartData" />
+                }
+                else
+                {
+                    <p>Select one or more runs and click 'Update Chart' to see the equity curve comparison.</p>
+                }
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-7">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                Run Details
+                @if (_selectedRun is not null)
+                {
+                    <button class="btn btn-sm btn-outline-secondary" @onclick="ExportToCsv">Export Trades</button>
+                }
+            </div>
+            <div class="card-body" style="max-height: 850px; overflow-y: auto;">
+                @if (_isDetailsLoading)
+                {
+                    <p><em>Loading run details...</em></p>
+                }
+                else if (_selectedRun is null)
+                {
+                    <p>Select a run from the left to see its detailed breakdown.</p>
+                }
+                else
+                {
+                    <h4>Parameters</h4>
+                    <pre class="bg-light p-2 rounded small">@_selectedRun.ParametersJson</pre>
+                    <hr />
+                    <h4>Year / Quarter Breakdown</h4>
+
+                    <div class="accordion" id="yearAccordion">
+                        @foreach (var yearGroup in _selectedTrades.GroupBy(t => t.ExitDate.Year).OrderBy(g => g.Key))
+                        {
+                            var year = yearGroup.Key;
+                            <div class="accordion-item">
+                                <h2 class="accordion-header">
+                                    <button class="accordion-button @(IsYearExpanded(year) ? "" : "collapsed")" type="button" @onclick="() => ToggleYear(year)">
+                                        <strong>@year</strong>
+                                        <span class="ms-auto me-3"><small>P/L: @yearGroup.Sum(t => t.ProfitLoss).ToString("C0") | Trades: @yearGroup.Count()</small></span>
+                                    </button>
+                                </h2>
+                                <div class="accordion-collapse collapse @(IsYearExpanded(year) ? "show" : "")">
+                                    <div class="accordion-body p-2">
+                                        @foreach (var quarterGroup in yearGroup.GroupBy(t => (t.ExitDate.Month - 1) / 3 + 1).OrderBy(g => g.Key))
+                                        {
+                                            var quarter = quarterGroup.Key;
+                                            var strategyId = GetStrategyIdForQuarter(quarter);
+                                            var strategyName = _strategies.FirstOrDefault(s => s.StrategyId == strategyId)?.StrategyName ?? "N/A";
+
+                                            <div class="card mb-2">
+                                                <div class="card-header bg-light py-2 px-3">
+                                                    <strong>Q@quarter</strong> - <em>Strategy: @strategyName</em>
+                                                    <span class="float-end"><small>P/L: @quarterGroup.Sum(t => t.ProfitLoss).ToString("C0") | Trades: @quarterGroup.Count()</small></span>
+                                                </div>
+                                                <table class="table table-sm table-striped mb-0 small">
+                                                    <thead><tr><th>Ticker</th><th>Entry</th><th>Exit</th><th>P/L</th></tr></thead>
+                                                    <tbody>
+                                                        @foreach (var trade in quarterGroup.OrderBy(t => t.EntryDate))
+                                                        {
+                                                            <tr>
+                                                                <td>@trade.Ticker</td>
+                                                                <td>@trade.EntryDate.ToShortDateString()</td>
+                                                                <td>@trade.ExitDate.ToShortDateString()</td>
+                                                                <td class="@(trade.ProfitLoss > 0 ? "text-success" : "text-danger")">@trade.ProfitLoss.ToString("C")</td>
+                                                            </tr>
+                                                        }
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        }
+                                    </div>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private IEnumerable<BacktestRun>? _allRuns;
+    private IEnumerable<Strategy> _strategies = Enumerable.Empty<Strategy>();
+    private HashSet<int> _expandedYears = new();
+    private HashSet<int> _selectedRunsForChart = new();
+    private Dictionary<int, IEnumerable<BacktestRunTrade>> _tradeCache = new();
+
+    private int? _selectedRunId;
+    private bool _isDetailsLoading = false;
+    private BacktestRun? _selectedRun;
+    private BacktestParameters? _selectedRunParams;
+    private IEnumerable<BacktestRunTrade> _selectedTrades = Enumerable.Empty<BacktestRunTrade>();
+
+    private ChartData? _chartData;
+    private string[] _chartColors = { "#0d6efd", "#dc3545", "#198754", "#ffc107", "#0dcaf0", "#6f42c1" };
+
+
+    protected override async Task OnInitializedAsync()
+    {
+        _allRuns = await Db.GetBacktestRunHeadersAsync();
+        _strategies = await BacktestService.GetAllStrategiesAsync();
+    }
+
+    private async Task SelectRun(int backtestRunId)
+    {
+        if (_selectedRunId == backtestRunId) return;
+
+        _selectedRunId = backtestRunId;
+        _isDetailsLoading = true;
+        _selectedRun = null;
+        _selectedTrades = Enumerable.Empty<BacktestRunTrade>();
+        _expandedYears.Clear();
+        StateHasChanged();
+
+        if (!_tradeCache.ContainsKey(backtestRunId))
+        {
+            var (run, trades) = await Db.GetBacktestRunDetailsAsync(backtestRunId);
+            _selectedRun = run;
+            _selectedTrades = trades;
+            _tradeCache[backtestRunId] = trades;
+        }
+        else
+        {
+            _selectedRun = _allRuns?.FirstOrDefault(r => r.BacktestRunId == backtestRunId);
+            _selectedTrades = _tradeCache[backtestRunId];
+        }
+
+        if (_selectedRun != null)
+        {
+            var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+            _selectedRunParams = JsonSerializer.Deserialize<BacktestParameters>(_selectedRun.ParametersJson, options);
+        }
+
+        _isDetailsLoading = false;
+        StateHasChanged();
+    }
+
+    private void ToggleRunSelectionForChart(int runId, bool isSelected)
+    {
+        if (isSelected)
+        {
+            _selectedRunsForChart.Add(runId);
+        }
+        else
+        {
+            _selectedRunsForChart.Remove(runId);
+        }
+    }
+
+    private async Task UpdateChart()
+    {
+        var allTradesForChart = new Dictionary<int, IEnumerable<BacktestRunTrade>>();
+        decimal initialCapital = 100000; // Assuming this is constant for comparison
+
+        foreach (var runId in _selectedRunsForChart)
+        {
+            if (!_tradeCache.ContainsKey(runId))
+            {
+                var (run, trades) = await Db.GetBacktestRunDetailsAsync(runId);
+                if (run is not null)
+                {
+                    _tradeCache[runId] = trades;
+
+                    // Attempt to get initial capital from params
+                    var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                    var p = JsonSerializer.Deserialize<BacktestParameters>(run.ParametersJson, options);
+                    if (p != null) initialCapital = p.InitialCapital;
+                }
+            }
+            allTradesForChart[runId] = _tradeCache[runId];
+        }
+
+        var allExitDates = allTradesForChart.Values.SelectMany(t => t).Select(t => t.ExitDate).Distinct().OrderBy(d => d).ToList();
+
+        var newChartData = new ChartData
+            {
+                Labels = allExitDates.Select(d => d.ToString("yyyy-MM-dd")).ToList()
+            };
+
+        int colorIndex = 0;
+        foreach (var runId in _selectedRunsForChart)
+        {
+            var runInfo = _allRuns?.FirstOrDefault(r => r.BacktestRunId == runId);
+            if (runInfo is null) continue;
+
+            var trades = allTradesForChart[runId];
+            var equityPoints = new List<decimal>();
+            decimal currentEquity = initialCapital;
+
+            var tradeLookup = trades.GroupBy(t => t.ExitDate).ToDictionary(g => g.Key, g => g.Sum(t => t.ProfitLoss));
+
+            foreach (var date in allExitDates)
+            {
+                if (tradeLookup.TryGetValue(date, out var dailyPL))
+                {
+                    currentEquity += dailyPL;
+                }
+                equityPoints.Add(currentEquity);
+            }
+
+            newChartData.Datasets.Add(new ChartDataset
+                {
+                    Label = runInfo.Notes ?? $"Run {runInfo.BacktestRunId}",
+                    Data = equityPoints,
+                    BorderColor = _chartColors[colorIndex % _chartColors.Length],
+                    Tension = 0.4
+                });
+            colorIndex++;
+        }
+
+        _chartData = newChartData;
+        StateHasChanged();
+    }
+
+    private void ToggleYear(int year)
+    {
+        if (_expandedYears.Contains(year))
+        {
+            _expandedYears.Remove(year);
+        }
+        else
+        {
+            _expandedYears.Add(year);
+        }
+    }
+
+    private bool IsYearExpanded(int year)
+    {
+        return _expandedYears.Contains(year);
+    }
+
+    private int GetStrategyIdForQuarter(int quarter)
+    {
+        if (_selectedRunParams is null) return 0;
+
+        if (_selectedRunParams.Mode == "Single")
+        {
+            return _selectedRunParams.StrategyId;
+        }
+
+        return quarter switch
+        {
+            1 => _selectedRunParams.Q1StrategyId,
+            2 => _selectedRunParams.Q2StrategyId,
+            3 => _selectedRunParams.Q3StrategyId,
+            4 => _selectedRunParams.Q4StrategyId,
+            _ => 0
+        };
+    }
+
+    private async Task ExportToCsv()
+    {
+        if (_selectedRun is null || !_selectedTrades.Any()) return;
+
+        var sb = new StringBuilder();
+        sb.AppendLine("Ticker,Shares,EntryDate,EntryPrice,ExitDate,ExitPrice,ProfitLoss");
+
+        foreach (var trade in _selectedTrades)
+        {
+            sb.AppendLine($"{trade.Ticker},{trade.Shares},{trade.EntryDate:yyyy-MM-dd},{trade.EntryPrice},{trade.ExitDate:yyyy-MM-dd},{trade.ExitPrice},{trade.ProfitLoss}");
+        }
+
+        var fileName = $"Backtest_Run_{_selectedRun.BacktestRunId}_{_selectedRun.RunDateTime:yyyyMMddHHmm}.csv";
+        await JSRuntime.InvokeVoidAsync("saveAsFile", fileName, sb.ToString());
+    }
+}

@@ -1,5 +1,6 @@
 using BeachHouse.UI.Models;
 using System.Diagnostics;
+using System.Text.Json;
 
 namespace BeachHouse.UI.Services
 {
@@ -20,7 +21,7 @@ namespace BeachHouse.UI.Services
             return _db.GetAllStrategiesAsync();
         }
 
-        public async Task<BacktestResult> RunBacktestAsync(BacktestParameters parameters, bool onlySP500, Action<string> onProgress)
+        public async Task<BacktestResult> RunBacktestAsync(BacktestParameters parameters, bool onlySP500, Action<string> onProgress, Action<int> onProgressPercentageUpdate)
         {
             var stopwatch = Stopwatch.StartNew();
             onProgress("Initializing backtest...");
@@ -85,10 +86,15 @@ namespace BeachHouse.UI.Services
             var virtualPortfolio = new List<SimulatedTrade>();
             var availableCapital = parameters.InitialCapital;
             int lastYearProcessed = 0;
+            int daysProcessed = 0;
+            int totalDays = tradingDays.Count(d => d >= parameters.StartDate && d <= parameters.EndDate);
 
             foreach (var currentDate in tradingDays)
             {
                 if (currentDate < parameters.StartDate || currentDate > parameters.EndDate) continue;
+                
+                daysProcessed++;
+                if (totalDays > 0) onProgressPercentageUpdate((int)((double)daysProcessed / totalDays * 100));
 
                 if (currentDate.Year > lastYearProcessed)
                 {
@@ -223,6 +229,14 @@ namespace BeachHouse.UI.Services
             stopwatch.Stop();
             onProgress($"Analysis complete! Total time: {stopwatch.Elapsed.TotalSeconds:N2} seconds.");
             return result;
+        }
+
+        public async Task SaveBacktestResultAsync(BacktestParameters parameters, BacktestResult result, string notes)
+        {
+            var options = new JsonSerializerOptions { WriteIndented = true };
+            string paramsJson = JsonSerializer.Serialize(parameters, options);
+
+            await _db.SaveBacktestResultAsync(paramsJson, notes, result);
         }
 
         private decimal CalculateAmountToInvest(Strategy strategy, decimal availableCapital, List<SimulatedTrade> portfolio, Dictionary<string, List<DailyDataPoint>> marketData, DateTime currentDate)
